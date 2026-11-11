@@ -10,6 +10,7 @@ import projectOptions from 'virtual:iwsdk-project';
 import { HandDebugSystem } from './hands/hand-debug-system.js';
 import { HandGestureSystem } from './hands/hand-gesture-system.js';
 import { PanelSystem } from './panel.js';
+import { StagePlacementSystem } from './world/stage-placement-system.js';
 import { RobotSystem } from './robot.js';
 
 World.create(
@@ -18,6 +19,7 @@ World.create(
 ).then((world) => {
   world.registerSystem(HandGestureSystem);
   world.registerSystem(HandDebugSystem);
+  world.registerSystem(StagePlacementSystem);
   world.registerSystem(RobotSystem);
   world.registerSystem(PanelSystem);
 });
