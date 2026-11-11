@@ -57,15 +57,15 @@ export class StagePlacementSystem extends createSystem({}) {
     );
   }
 
-  /** 0.5 m forward, 0.45 m below eye height, facing the player. */
+  /** 0.55 m forward, 0.32 m below eye height (~30 deg down), facing the player. */
   placeInFront(): void {
     this.player.head.getWorldPosition(this.head);
     const fwd = this.target.set(0, 0, -1).applyQuaternion(this.player.head.getWorldQuaternion(this.headQuat));
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
     fwd.normalize();
-    Stage.root.position.copy(this.head).addScaledVector(fwd, 0.5);
-    Stage.root.position.y = Math.max(this.head.y - 0.45, 0.5);
+    Stage.root.position.copy(this.head).addScaledVector(fwd, 0.55);
+    Stage.root.position.y = Math.max(this.head.y - 0.32, 0.5);
     this.faceHead();
   }
 

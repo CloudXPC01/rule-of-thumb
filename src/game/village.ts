@@ -28,6 +28,7 @@ export enum VState {
   Cheer,
   Flee,
   Throw,
+  Gather,
 }
 
 export enum Job {
@@ -60,12 +61,20 @@ export interface Villager {
   shiver: number;
   bob: number;
   speech: number; // seconds left of gibberish bubble
+  /** 0..1 crouch under the Hand's shadow. */
+  duck: number;
+  /** Free-point goal used by Flee and Gather. */
+  gx: number;
+  gz: number;
+  /** Seconds since this villager last chipped wood (render juice). */
+  chip: number;
 }
 
 export const TUNICS = [0xe8a33c, 0x4b7bd1, 0xd9534f, 0x8e5bd1, 0x3cb3a8, 0xe07bb5, 0xf2e05c, 0x7fbf4d];
 
 export interface VillageEvents {
   onChop?(tile: number, v: Villager): void;
+  onChopTick?(tile: number, v: Villager): void;
   onPlant?(tile: number, v: Villager): void;
   onHutBuilt?(tile: number): void;
   onBirth?(v: Villager): void;
@@ -75,8 +84,8 @@ export interface VillageEvents {
 }
 
 const SPEED = 0.03; // m/s on a 0.5 m island
-const MAX_VILLAGERS = 16;
-const WOOD_PER_HUT = 5;
+export const MAX_VILLAGERS = 16;
+export const WOOD_PER_HUT = 5;
 
 export class Village {
   villagers: Villager[] = [];
@@ -85,8 +94,16 @@ export class Village {
   /** Cloud position in stage-local space, written by the god system. */
   cloud = { x: 0, z: 0, active: false };
   events: VillageEvents = {};
+  /** Global pace multiplier for work (set per Age). */
+  workRate = 1;
+  /** Food eaten per villager per second. */
+  hunger = 0.012;
+  /** When true, everyone walks to the festival ring and cheers. */
+  festival = false;
   private nb: number[] = [];
   private rng = 12345;
+  private pt = { x: 0, y: 0, z: 0 };
+  private pt2 = { x: 0, y: 0, z: 0 };
 
   constructor(private island: Island) {
     for (let k = 0; k < 5; k++) this.spawn(island.centre);
@@ -99,8 +116,7 @@ export class Village {
 
   spawn(nearTile: number): Villager | null {
     if (this.villagers.length >= MAX_VILLAGERS) return null;
-    const p = { x: 0, y: 0, z: 0 };
-    this.island.centreOf(nearTile, p);
+    const p = this.island.centreOf(nearTile, this.pt);
     const v: Villager = {
       id: this.villagers.length,
       x: p.x + (this.rand() - 0.5) * TILE * 2,
@@ -116,32 +132,78 @@ export class Village {
       gazed: 0,
       watching: 0,
       lookUp: 0,
-      hop: 0,
+      hop: 1,
       shiver: 0,
       bob: this.rand() * 10,
       speech: 0,
+      duck: 0,
+      gx: 0,
+      gz: 0,
+      chip: 0,
     };
+    // keep spawn on land
+    if (this.island.tileAtLocal(v.x, v.z) < 0) {
+      v.x = p.x;
+      v.z = p.z;
+    }
     this.villagers.push(v);
     return v;
   }
 
+  /** Everyone within `r` of (x,z) runs away for a few seconds. */
+  scare(x: number, z: number, r: number) {
+    for (const v of this.villagers) {
+      const dx = v.x - x;
+      const dz = v.z - z;
+      const d = Math.hypot(dx, dz);
+      if (d > r || v.state === VState.Gather) continue;
+      this.release(v);
+      if (v.carrying === 3) v.carrying = 0;
+      const k = d > 1e-4 ? 1 / d : 1;
+      v.gx = v.x + dx * k * 0.08;
+      v.gz = v.z + dz * k * 0.08;
+      this.clampToLand(v);
+      v.state = VState.Flee;
+      v.job = Job.None;
+      v.timer = 2.5;
+      v.hop = 1;
+      v.watching = 0;
+    }
+  }
+
   update(dt: number, time: number) {
     const isl = this.island;
-    // food: everybody eats slowly
-    this.food = Math.max(0, this.food - dt * this.villagers.length * 0.012);
+    this.food = Math.max(0, this.food - dt * this.villagers.length * this.hunger);
 
     for (const v of this.villagers) {
-      v.bob += dt * (v.state === VState.Walk ? 14 : 3);
+      v.bob += dt * (v.state === VState.Walk || v.state === VState.Carry || v.state === VState.Flee ? 14 : 3);
       if (v.hop > 0) v.hop = Math.max(0, v.hop - dt * 3);
       if (v.speech > 0) v.speech -= dt;
+      v.chip += dt;
       const shivering = this.laws.has('noWarmth');
       v.shiver = shivering ? 1 : Math.max(0, v.shiver - dt);
 
+      // terrain height under feet
+      const ti = isl.tileAtLocal(v.x, v.z);
+      if (ti >= 0) v.y += (isl.tiles[ti].h - v.y) * Math.min(1, dt * 10);
+
+      if (this.festival && v.state !== VState.Gather && v.state !== VState.Cheer) {
+        this.release(v);
+        v.state = VState.Gather;
+        v.watching = 0;
+        const a = (v.id / Math.max(1, this.villagers.length)) * Math.PI * 2;
+        const c = isl.centreOf(isl.centre, this.pt);
+        v.gx = c.x + Math.sin(a) * 0.07;
+        v.gz = c.z + Math.cos(a) * 0.07;
+        this.clampToLand(v);
+      }
+
       // Being watched by the Hand overrides work.
-      if (v.watching > 0) {
+      if (v.watching > 0 && !this.festival && v.state !== VState.Flee) {
         v.watching -= dt;
         v.lookUp = Math.min(1, v.lookUp + dt * 5);
         if (v.state !== VState.Watching) {
+          // keep a claimed job tile; resume later
           v.state = VState.Watching;
           v.hop = 1;
         }
@@ -152,22 +214,20 @@ export class Village {
       }
       v.lookUp = Math.max(0, v.lookUp - dt * 2);
 
-      // terrain height under feet
-      const ti = isl.tileAtLocal(v.x, v.z);
-      if (ti >= 0) v.y += (isl.tiles[ti].h - v.y) * Math.min(1, dt * 10);
-
       // Rain dance overrides everything when the cloud hovers near.
-      if (this.laws.has('rainDance') && this.cloud.active) {
+      if (this.laws.has('rainDance') && this.cloud.active && !this.festival && v.state !== VState.Flee) {
         const d = Math.hypot(this.cloud.x - v.x, this.cloud.z - v.z);
-        if (d < 0.18 && v.carrying === 0) {
+        if (d < 0.2 && v.carrying === 0) {
+          if (v.state !== VState.Dance) this.release(v);
           v.state = VState.Dance;
           v.heading += dt * 6;
           v.hop = Math.max(v.hop, 0.5 + 0.5 * Math.sin(time * 8 + v.id));
+          v.timer = 0.8;
           continue;
         }
       }
 
-      const workSpeed = shivering ? 0.6 : 1;
+      const workSpeed = (shivering ? 0.6 : 1) * this.workRate;
 
       switch (v.state) {
         case VState.Idle:
@@ -175,10 +235,25 @@ export class Village {
         case VState.Cheer:
           v.timer -= dt;
           if (v.state === VState.Cheer) v.hop = Math.max(v.hop, 0.6 + 0.4 * Math.sin(time * 12 + v.id));
-          if (v.timer <= 0) this.chooseJob(v);
+          if (v.timer <= 0 && !this.festival) this.chooseJob(v);
           break;
         case VState.Walk:
-          if (this.walkTo(v, v.target, dt * workSpeed)) this.arrive(v);
+          if (this.walkTo(v, v.target, dt * Math.max(0.7, workSpeed))) this.arrive(v);
+          break;
+        case VState.Flee:
+          v.timer -= dt;
+          if (this.walkPoint(v, v.gx, v.gz, dt * 2.2) || v.timer <= 0) {
+            v.state = VState.Idle;
+            v.timer = 0.8 + this.rand();
+          }
+          break;
+        case VState.Gather:
+          if (this.walkPoint(v, v.gx, v.gz, dt)) {
+            v.state = VState.Cheer;
+            v.timer = 999;
+            const c = isl.centreOf(isl.centre, this.pt);
+            v.heading = Math.atan2(c.x - v.x, c.z - v.z);
+          }
           break;
         case VState.Chop:
           v.timer -= dt * workSpeed;
@@ -186,6 +261,10 @@ export class Village {
             this.release(v);
             v.state = VState.Idle;
             break;
+          }
+          if (v.chip > 0.45) {
+            v.chip = 0;
+            this.events.onChopTick?.(v.target, v);
           }
           if (v.timer <= 0) {
             isl.setType(v.target, Tile.Stump);
@@ -226,7 +305,11 @@ export class Village {
               v.state = VState.Throw;
               v.timer = 1.2;
               v.hop = 1;
-            } else this.goHome(v);
+            } else if (v.carrying === 2) this.goHome(v);
+            else {
+              v.state = VState.Idle;
+              v.timer = 1;
+            }
           }
           break;
         case VState.Throw:
@@ -234,8 +317,8 @@ export class Village {
           if (v.timer <= 0) {
             this.events.onThrowFish?.(v);
             v.carrying = 0;
-            v.state = VState.Idle;
-            v.timer = 1;
+            v.state = VState.Cheer;
+            v.timer = 1.2;
           }
           break;
         case VState.Water:
@@ -264,7 +347,7 @@ export class Village {
           }
           break;
         case VState.Carry:
-          if (this.walkTo(v, v.target, dt * workSpeed)) {
+          if (this.walkTo(v, v.target, dt * Math.max(0.7, workSpeed))) {
             if (v.carrying === 1) {
               isl.wood++;
               if (isl.wood >= WOOD_PER_HUT) this.buildHut();
@@ -273,18 +356,24 @@ export class Village {
             }
             v.carrying = 0;
             v.state = VState.Idle;
-            v.timer = 0.6 + this.rand() * 1.5;
+            v.timer = (1.4 + this.rand() * 2.6) / this.workRate;
           }
           break;
       }
     }
   }
 
+  private choppers(): number {
+    let n = 0;
+    for (const v of this.villagers) if (v.job === Job.Chop) n++;
+    return n;
+  }
+
   private chooseJob(v: Villager) {
     const isl = this.island;
     const hungry = this.food < this.villagers.length * 0.8;
     // Faithful water carrying: if there is dust, sometimes go water it.
-    if (this.laws.has('waterDust') && this.rand() < 0.35) {
+    if (this.laws.has('waterDust') && this.rand() < 0.4) {
       const pond = this.nearest(v, (t) => isl.tiles[t].type === Tile.Water);
       const dust = this.nearest(v, (t) => isl.tiles[t].type === Tile.Dust && isl.tiles[t].claimedBy < 0);
       if (pond >= 0 && dust >= 0) {
@@ -304,10 +393,11 @@ export class Village {
         return;
       }
     }
+    const quota = this.laws.has('fishQuota');
     const fishOk = (t: number) => {
       const tile = isl.tiles[t];
       if (tile.type !== Tile.Water || tile.fish <= 0 || tile.claimedBy >= 0) return false;
-      if (this.laws.has('fishQuota') && tile.fish < 2) return false;
+      if (quota && tile.fish < 2) return false;
       return true;
     };
     if (hungry || this.rand() < 0.3) {
@@ -319,21 +409,25 @@ export class Village {
         return;
       }
     }
-    const holy = this.laws.has('stumpsHoly');
-    const tree = this.nearest(v, (t) => {
-      const tile = isl.tiles[t];
-      if (tile.type !== Tile.Tree || tile.claimedBy >= 0) return false;
-      if (holy) {
-        isl.neighbours(t, this.nb);
-        for (const n of this.nb) if (isl.tiles[n].type === Tile.Stump) return false;
+    // Not everyone chops at once: keeps the forest from vanishing in a minute.
+    const cap = Math.max(2, Math.ceil(this.villagers.length * 0.45));
+    if (this.choppers() < cap) {
+      const holy = this.laws.has('stumpsHoly');
+      const tree = this.nearest(v, (t) => {
+        const tile = isl.tiles[t];
+        if (tile.type !== Tile.Tree || tile.claimedBy >= 0 || tile.fire > 0) return false;
+        if (holy) {
+          isl.neighbours(t, this.nb);
+          for (const n of this.nb) if (isl.tiles[n].type === Tile.Stump) return false;
+        }
+        return true;
+      });
+      if (tree >= 0) {
+        this.claim(v, tree);
+        v.job = Job.Chop;
+        v.state = VState.Walk;
+        return;
       }
-      return true;
-    });
-    if (tree >= 0) {
-      this.claim(v, tree);
-      v.job = Job.Chop;
-      v.state = VState.Walk;
-      return;
     }
     // nothing to do: wander
     v.state = VState.Idle;
@@ -345,11 +439,12 @@ export class Village {
     switch (v.job) {
       case Job.Chop:
         v.state = VState.Chop;
-        v.timer = 2.4;
+        v.timer = 3.2;
+        v.chip = 0;
         break;
       case Job.Fish:
         v.state = VState.Fish;
-        v.timer = 2.0;
+        v.timer = 2.2;
         break;
       case Job.WaterDust:
         v.state = VState.Water;
@@ -382,27 +477,27 @@ export class Village {
     if (v.target >= 0 && this.island.tiles[v.target]?.claimedBy === v.id) {
       this.island.tiles[v.target].claimedBy = -1;
     }
+    if (v.job === Job.Chop) v.job = Job.None;
   }
 
   private buildHut() {
     const isl = this.island;
-    // nearest grass tile to centre that's not water/hut
-    const p = { x: 0, y: 0, z: 0 };
-    isl.centreOf(isl.centre, p);
+    const p = isl.centreOf(isl.centre, this.pt);
+    const px = p.x;
+    const pz = p.z;
     let best = -1;
     let bestD = 1e9;
     for (let i = 0; i < isl.tiles.length; i++) {
       const t = isl.tiles[i];
-      if (t.type !== Tile.Grass || t.claimedBy >= 0) continue;
-      const q = { x: 0, y: 0, z: 0 };
-      isl.centreOf(i, q);
-      const d = Math.hypot(q.x - p.x, q.z - p.z) + this.rand() * 0.02;
+      if (t.type !== Tile.Grass || t.claimedBy >= 0 || t.fire > 0) continue;
+      const q = isl.centreOf(i, this.pt2);
+      const d = Math.hypot(q.x - px, q.z - pz) + this.rand() * 0.02;
       if (d < bestD) {
         bestD = d;
         best = i;
       }
     }
-    if (best < 0) return;
+    if (best < 0 || this.villagers.length >= MAX_VILLAGERS) return;
     isl.wood -= WOOD_PER_HUT;
     isl.setType(best, Tile.Hut);
     isl.huts.push(best);
@@ -413,11 +508,36 @@ export class Village {
     }
   }
 
+  private clampToLand(v: Villager) {
+    if (this.island.tileAtLocal(v.gx, v.gz) >= 0) return;
+    // pull the goal toward the island centre until it is on land
+    for (let k = 0; k < 8; k++) {
+      v.gx *= 0.8;
+      v.gz *= 0.8;
+      if (this.island.tileAtLocal(v.gx, v.gz) >= 0) return;
+    }
+  }
+
+  /** Walk toward a free point; true on arrival. */
+  private walkPoint(v: Villager, x: number, z: number, dt: number): boolean {
+    const dx = x - v.x;
+    const dz = z - v.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.006) return true;
+    v.heading = Math.atan2(dx, dz);
+    const step = Math.min(d, SPEED * dt);
+    const nx = v.x + (dx / d) * step;
+    const nz = v.z + (dz / d) * step;
+    if (this.island.tileAtLocal(nx, nz) < 0) return true;
+    v.x = nx;
+    v.z = nz;
+    return false;
+  }
+
   /** Move toward tile centre; returns true on arrival (within half a tile). */
   private walkTo(v: Villager, tile: number, dt: number): boolean {
     const isl = this.island;
-    const p = { x: 0, y: 0, z: 0 };
-    isl.centreOf(tile, p);
+    const p = isl.centreOf(tile, this.pt);
     const dx = p.x - v.x;
     const dz = p.z - v.z;
     const d = Math.hypot(dx, dz);
@@ -432,12 +552,13 @@ export class Village {
     let nx = v.x + Math.sin(v.heading) * step;
     let nz = v.z + Math.cos(v.heading) * step;
     // don't walk on water unless that is the destination: sidestep
-    const ti = isl.tileAtLocal(nx, nz);
+    let ti = isl.tileAtLocal(nx, nz);
     if (ti >= 0 && ti !== tile && isl.tiles[ti].type === Tile.Water) {
       nx = v.x + Math.sin(v.heading + 1.2) * step;
       nz = v.z + Math.cos(v.heading + 1.2) * step;
+      ti = isl.tileAtLocal(nx, nz);
     }
-    if (ti < 0) return true; // fell off the map edge somehow: give up the walk
+    if (ti < 0) return true; // edge of the map: give up the walk
     v.x = nx;
     v.z = nz;
     return false;
@@ -447,10 +568,9 @@ export class Village {
     const isl = this.island;
     let best = -1;
     let bestD = 1e9;
-    const p = { x: 0, y: 0, z: 0 };
     for (let i = 0; i < isl.tiles.length; i++) {
       if (!ok(i)) continue;
-      isl.centreOf(i, p);
+      const p = isl.centreOf(i, this.pt2);
       const d = Math.hypot(p.x - v.x, p.z - v.z) + this.rand() * 0.04;
       if (d < bestD) {
         bestD = d;

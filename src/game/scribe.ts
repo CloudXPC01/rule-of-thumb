@@ -45,6 +45,11 @@ export interface ScribeContext {
   health: number;
   population: number;
   forceFaithful: boolean;
+  /** Script a specific reading (e.g. the guaranteed first misread). */
+  forceLaw?: LawId;
+  /** 0..1, scared villagers misread more. */
+  fear?: number;
+  faith?: number;
 }
 
 export interface Reading {
@@ -61,7 +66,12 @@ function rnd(): number {
 
 export function localReading(c: ScribeContext): Reading {
   const cand = CANDIDATES[c.omen];
-  let faithful = c.forceFaithful || rnd() < 0.62;
+  if (c.forceLaw) {
+    const o = VERSES[c.forceLaw];
+    return { law: c.forceLaw, verse: o[Math.floor(rnd() * o.length)], source: 'local' };
+  }
+  const pFaithful = 0.62 - (c.fear ?? 0) * 0.25 + (c.faith ?? 0) * 0.1;
+  let faithful = c.forceFaithful || rnd() < pFaithful;
   // If the Hand already crushed the misreading, they learn.
   if (c.crushed.includes(cand.misread)) faithful = true;
   if (c.crushed.includes(cand.faithful) && !c.forceFaithful) faithful = false;
@@ -88,6 +98,9 @@ export async function readOmen(c: ScribeContext): Promise<Reading> {
         crushed: c.crushed,
         health: Math.round(c.health * 100),
         population: c.population,
+        fear: Math.round((c.fear ?? 0) * 100),
+        faith: Math.round((c.faith ?? 0) * 100),
+        forceLaw: c.forceLaw ?? null,
         candidates: CANDIDATES[c.omen],
       }),
       signal: ctl.signal,
@@ -97,6 +110,7 @@ export async function readOmen(c: ScribeContext): Promise<Reading> {
     const data = (await res.json()) as { law?: string; verse?: string };
     const cand = CANDIDATES[c.omen];
     if (data.law !== cand.faithful && data.law !== cand.misread) return local;
+    if (c.forceLaw && data.law !== c.forceLaw) return local;
     const verse = typeof data.verse === 'string' ? sanitize(data.verse) : '';
     if (!verse) return local;
     return { law: data.law as LawId, verse, source: 'ai' };

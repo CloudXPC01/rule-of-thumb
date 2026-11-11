@@ -35,6 +35,8 @@ export const PAL = {
   hutWall: 0xf0d9a8,
   hutRoof: 0xc6463a,
   sapling: 0x8be05a,
+  ember: 0xff6a1f,
+  char: 0x3a2e28,
 };
 
 const COL_H = 0.05; // dirt column depth below surface
@@ -55,6 +57,8 @@ export class IslandRender {
   private s = new Vector3();
   private c = new Color();
   private grey = new Color(0x9a8f80);
+  private ember = new Color(PAL.ember);
+  private charC = new Color(PAL.char);
   private pos = { x: 0, y: 0, z: 0 };
   private desat = 0;
   /** Per-tile pop animation timers (0..1, 1 = settled). */
@@ -131,6 +135,8 @@ export class IslandRender {
     else if (t.type === Tile.Stump) top = jitter > 0.5 ? PAL.grass2 : PAL.dust2;
     this.tint(top, t.type === Tile.Water ? 0 : 0.05, jitter);
     if (t.wet > 0 && t.type !== Tile.Water) this.c.multiplyScalar(1 - t.wet * 0.25);
+    if (t.fire > 0) this.c.lerp(this.ember, Math.min(1, t.fire * 0.9));
+    else if (t.burnt > 0) this.c.lerp(this.charC, Math.min(0.7, t.burnt * 0.15));
     this.cap.setColorAt(i, this.c);
 
     // trunk: trees (tall), stumps (short), saplings (thin)
@@ -159,6 +165,7 @@ export class IslandRender {
     this.m.compose(this.p, this.q, this.s);
     this.canopies.setMatrixAt(i * 2, this.m);
     this.tint(sap ? PAL.sapling : jitter > 0.5 ? PAL.canopy : PAL.canopy2, 0.06, jitter);
+    if (t.fire > 0) this.c.lerp(this.ember, Math.min(1, t.fire));
     this.canopies.setColorAt(i * 2, this.c);
     const cw2 = tree ? cw * 0.6 : 0;
     this.p.set(this.pos.x + (jitter - 0.5) * 0.006, baseY + cw * 0.95 + cw2 * 0.3, this.pos.z);

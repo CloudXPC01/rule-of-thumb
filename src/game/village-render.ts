@@ -18,9 +18,9 @@ import {
 import { Village, VState } from './village.js';
 
 const MAX = 16;
-const BODY_W = 0.0075;
-const BODY_H = 0.0095;
-const HEAD = 0.008;
+const BODY_W = 0.011;
+const BODY_H = 0.014;
+const HEAD = 0.0115;
 const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524];
 
 export class VillageRender {
@@ -80,10 +80,11 @@ export class VillageRender {
         yaw = lerpAngle(v.heading, toYaw, v.lookUp);
       }
       this.q.setFromEuler(this.e.set(chop * 0.4, yaw, 0));
+      const duck = v.duck;
       const baseY = v.y + bob + hop;
 
       this.p.set(v.x + shake, baseY + BODY_H / 2, v.z);
-      this.s.set(BODY_W, BODY_H * (1 - (v.hop > 0.8 ? 0.15 : 0)), BODY_W * 0.8);
+      this.s.set(BODY_W * (1 + duck * 0.25), BODY_H * (1 - (v.hop > 0.8 ? 0.15 : 0)) * (1 - duck * 0.45), BODY_W * 0.8);
       this.m.compose(this.p, this.q, this.s);
       this.body.setMatrixAt(k, this.m);
       this.body.setColorAt(k, this.c.set(v.tunic));
@@ -91,18 +92,19 @@ export class VillageRender {
       // head pitches back toward the Hand when watched
       const pitch = -0.7 * v.lookUp;
       this.qHead.setFromEuler(this.e.set(pitch, yaw, 0));
-      this.p.set(v.x + shake, baseY + BODY_H + HEAD / 2, v.z);
+      const bodyH = BODY_H * (1 - duck * 0.45);
+      this.p.set(v.x + shake, baseY + bodyH + HEAD / 2, v.z);
       this.s.setScalar(HEAD);
       this.m.compose(this.p, this.qHead, this.s);
       this.head.setMatrixAt(k, this.m);
       this.head.setColorAt(k, this.c.set(SKIN[v.id % SKIN.length]));
 
       // eyes: two white pixels on the face, sliding toward the look target
-      const lookX = Math.max(-1, Math.min(1, (this.lookTarget.x - v.x) * 8)) * 0.0008;
+      const lookX = Math.max(-1, Math.min(1, (this.lookTarget.x - v.x) * 8)) * 0.0012;
       for (let e = 0; e < 2; e++) {
-        this.off.set((e ? 1 : -1) * 0.0019 + lookX, 0.0008, HEAD / 2 + 0.0003).applyQuaternion(this.qHead);
-        this.p.set(v.x + shake, baseY + BODY_H + HEAD / 2, v.z).add(this.off);
-        this.s.set(0.0016, v.lookUp > 0.5 ? 0.0022 : 0.0016, 0.0006);
+        this.off.set((e ? 1 : -1) * 0.0027 + lookX, 0.0012, HEAD / 2 + 0.0003).applyQuaternion(this.qHead);
+        this.p.set(v.x + shake, baseY + bodyH + HEAD / 2, v.z).add(this.off);
+        this.s.set(0.0023, v.lookUp > 0.5 ? 0.0032 : 0.0023, 0.0006);
         this.m.compose(this.p, this.qHead, this.s);
         this.eyes.setMatrixAt(k * 2 + e, this.m);
       }
@@ -110,7 +112,7 @@ export class VillageRender {
       // carried item above the head
       if (v.carrying) {
         const col = v.carrying === 1 ? 0x8a5a2b : v.carrying === 2 ? 0x9fd3e6 : 0x3fb3d8;
-        this.p.set(v.x, baseY + BODY_H + HEAD + 0.004, v.z);
+        this.p.set(v.x, baseY + bodyH + HEAD + 0.004, v.z);
         if (v.carrying === 1) this.s.set(0.012, 0.004, 0.004);
         else if (v.carrying === 2) this.s.set(0.008, 0.0035, 0.003);
         else this.s.set(0.005, 0.005, 0.005);

@@ -14,9 +14,10 @@ import {
   SRGBColorSpace,
 } from '@iwsdk/core';
 import type { LawId } from './village.js';
+import { drawText, wrapText } from './pixfont.js';
 
 const W = 96;
-const H = 128;
+const H = 124;
 
 export class Tablet {
   root = new Group();
@@ -48,10 +49,10 @@ export class Tablet {
     this.tex.magFilter = NearestFilter;
     this.tex.minFilter = NearestFilter;
     this.tex.colorSpace = SRGBColorSpace;
-    this.lines = wrap(this.text, 13);
+    this.lines = wrapText(this.text, 14);
 
-    const w = 0.05;
-    const h = 0.066;
+    const w = 0.095;
+    const h = 0.123;
     this.stone = new Mesh(new BoxGeometry(w + 0.006, h + 0.006, 0.008), new MeshLambertMaterial({ color: 0x8b8378 }));
     this.face = new Mesh(new PlaneGeometry(w, h), new MeshBasicMaterial({ map: this.tex, transparent: true }));
     this.face.position.z = 0.0042;
@@ -92,42 +93,31 @@ export class Tablet {
     g.clearRect(0, 0, W, H);
     g.fillStyle = this.blessed ? '#e6c76a' : '#d9cfbf';
     g.fillRect(0, 0, W, H);
-    // speckle
-    for (let i = 0; i < 60; i++) {
-      g.fillStyle = i % 2 ? '#c8bca9' : '#e8dfcf';
+    // speckle + chipped corners: reads as carved stone at pixel scale
+    for (let i = 0; i < 70; i++) {
+      g.fillStyle = i % 2 ? (this.blessed ? '#d4ae4e' : '#c8bca9') : this.blessed ? '#f3dc8a' : '#e8dfcf';
       g.fillRect((i * 37) % W, (i * 53) % H, 2, 2);
     }
-    g.fillStyle = '#5a4a3a';
-    g.font = 'bold 12px monospace';
-    g.textAlign = 'center';
-    g.fillText(this.numeral, W / 2, 16);
-    g.fillRect(16, 21, W - 32, 2);
-    g.font = 'bold 9px monospace';
+    g.clearRect(0, 0, 3, 3);
+    g.clearRect(W - 3, 0, 3, 3);
+    g.clearRect(0, H - 3, 3, 3);
+    g.clearRect(W - 3, H - 3, 3, 3);
+    const ink = this.blessed ? '#6b4a10' : '#4a3a2c';
+    const cut = this.blessed ? '#fff1b8' : '#f4eee2';
+    drawText(g, this.numeral, W / 2, 6, 2, ink, 'center', cut);
+    g.fillStyle = ink;
+    g.fillRect(14, 24, W - 28, 2);
     let left = this.shown;
-    let y = 36;
+    let y = 33;
     for (const line of this.lines) {
       if (left <= 0) break;
       const part = line.slice(0, left);
       left -= line.length + 1;
-      g.fillText(part, W / 2, y);
-      y += 12;
+      drawText(g, part, W / 2, y, 1, ink, 'center', cut);
+      y += 10;
     }
     this.tex.needsUpdate = true;
   }
-}
-
-function wrap(text: string, max: number): string[] {
-  const words = text.split(' ');
-  const out: string[] = [];
-  let cur = '';
-  for (const w of words) {
-    if ((cur + ' ' + w).trim().length > max) {
-      if (cur) out.push(cur);
-      cur = w;
-    } else cur = (cur + ' ' + w).trim();
-  }
-  if (cur) out.push(cur);
-  return out;
 }
 
 /** Billboard text bubble (e.g. "!" or a petition pictogram line). */
@@ -169,11 +159,8 @@ export class Bubble {
     g.fillRect(w - 2, 2, 2, h - 4);
     g.fillRect(2, 0, w - 4, 2);
     g.fillRect(2, h - 2, w - 4, 2);
-    const size = Math.floor(h * 0.6);
-    g.font = `bold ${size}px monospace`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText(text, w / 2, h / 2 + 1);
+    const scale = Math.max(1, Math.floor((h - 6) / 8));
+    drawText(g, text, w / 2, Math.round((h - 7 * scale) / 2), scale, fg, 'center');
     this.tex.needsUpdate = true;
   }
 }

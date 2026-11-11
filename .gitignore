@@ -43,3 +43,8 @@ pids/
 .cursor/mcp.json
 .vscode/mcp.json
 .codex/config.toml
+
+# local notes (never commit)
+master-prompt.md
+HANDOFF-*.md
+.iwsdk/

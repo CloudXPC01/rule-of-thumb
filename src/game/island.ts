@@ -35,6 +35,10 @@ export interface TileState {
   age: number;
   /** Fish count for water tiles. */
   fish: number;
+  /** 0..1 fire intensity; 0 = not burning. */
+  fire: number;
+  /** Seconds this tile has been burning. */
+  burnt: number;
 }
 
 export class Island {
@@ -56,7 +60,7 @@ export class Island {
         const inside = d <= c + 0.35;
         const type = inside ? Tile.Grass : Tile.Void;
         const h = inside ? Math.max(0, 0.012 - d * 0.0012) + Math.floor(rand() * 2) * 0.004 : 0;
-        this.tiles.push({ type, h, growth: 0, wet: 0, soak: 0, claimedBy: -1, age: 99, fish: 0 });
+        this.tiles.push({ type, h, growth: 0, wet: 0, soak: 0, claimedBy: -1, age: 99, fish: 0, fire: 0, burnt: 0 });
       }
     }
     // Pond (front-left from the player's view, player looks toward -z... stage faces player at +z)
@@ -78,18 +82,18 @@ export class Island {
       const z = Math.floor(i / N);
       const back = z < 6;
       const right = x > 8;
-      if ((back || right) && rand() < 0.72) {
+      if ((back || right) && rand() < 0.58) {
         t.type = Tile.Tree;
         t.growth = 1;
-      } else if (rand() < 0.12) {
+      } else if (rand() < 0.08) {
         t.type = Tile.Tree;
         t.growth = 1;
       }
     }
     // Village clearing near the centre-front.
     this.centre = this.index(7, 8);
-    for (let z = 7; z <= 9; z++) {
-      for (let x = 6; x <= 8; x++) {
+    for (let z = 6; z <= 10; z++) {
+      for (let x = 5; x <= 9; x++) {
         const t = this.at(x, z)!;
         if (t.type !== Tile.Water) t.type = Tile.Grass;
       }
@@ -133,6 +137,7 @@ export class Island {
     if (type === Tile.Sapling) t.growth = 0;
     if (type === Tile.Tree) t.growth = 1;
     if (type !== Tile.Dust) t.soak = 0;
+    if (type === Tile.Water || type === Tile.Dust) t.fire = 0;
     this.dirty.add(i);
   }
 
