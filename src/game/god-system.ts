@@ -378,7 +378,7 @@ export class GodSystem extends createSystem({}) {
     this.seedHolder = null;
     this.seed.position.copy(SEED_HOME);
     this.seed.visible = true;
-    this.cloud.pos.set(0.06, 0.2, -0.02);
+    this.cloud.pos.set(0.1, 0.17, 0.04);
     this.hintIdx = -1;
     Book.startPlay();
     Sfx.unlock();
@@ -1380,7 +1380,8 @@ export class GodSystem extends createSystem({}) {
       this.banner.show('HARMONY', `${pop} SOULS. ${laws} LAWS. THEY TEND THE LAND AS YOU DID. ${book}. PINCH TO PLAY AGAIN.`, 0, 'gold');
       Sfx.fanfare();
     } else if (e === 'zealotry') {
-      this.banner.show('ZEALOTRY', `THE LAND LIVES, BUT ${pop} SOULS WATCH THE SKY IN FEAR. THEY OBEY. THEY DO NOT SING. ${book}. PINCH TO PLAY AGAIN.`, 0, 'stone');
+      const why = this.fear >= 0.45 ? `${pop} SOULS WATCH THE SKY IN FEAR. THEY OBEY. THEY DO NOT SING.` : `ONLY ${pop} SOULS REMAIN, AND THEY GUARD YOUR LAWS FIERCELY.`;
+      this.banner.show('ZEALOTRY', `THE LAND LIVES. ${why} ${book}. PINCH TO PLAY AGAIN.`, 0, 'stone');
     } else {
       this.banner.show('EXODUS', `THE LAND IS DUST. THEY SAIL OFF THE EDGE OF YOUR DESK. ${book}. PINCH TO PLAY AGAIN.`, 0, 'night');
       this.startExodus();
@@ -1541,7 +1542,7 @@ export class GodSystem extends createSystem({}) {
         food: this.village.food,
         people: this.village.villagers.length,
         laws: this.tablets.length,
-        hint: this.phase === 'attract' ? 'PRESS ENTER TO BEGIN' : hint,
+        hint: this.phase === 'attract' ? 'PRESS ENTER TO BEGIN' : this.phase === 'festival' ? 'THEY READ YOUR LAWS ALOUD. LISTEN.' : this.phase === 'end' ? 'PINCH ANYWHERE TO PLAY AGAIN' : hint,
         hintPulse: this.phase === 'play' && this.hintIdx >= 0,
       },
       performance.now() / 1000,

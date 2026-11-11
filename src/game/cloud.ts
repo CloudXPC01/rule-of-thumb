@@ -25,7 +25,7 @@ const BOLT_SEGS = 7;
 export class Cloud {
   root = new Group();
   /** Stage-local position of the cloud centre. */
-  pos = new Vector3(0.06, 0.2, -0.02);
+  pos = new Vector3(0.1, 0.17, 0.04);
   /** 0..1 how hard it is being wrung right now. */
   squeeze = 0;
   /** 0..1 hover highlight. */
