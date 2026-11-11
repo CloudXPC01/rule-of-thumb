@@ -18,6 +18,8 @@ import {
   Vector3,
 } from '@iwsdk/core';
 import { hash } from './island-render.js';
+import { VoxelMesh } from './voxel.js';
+import { C } from './style.js';
 
 const PUFFS = 14;
 const BOLT_SEGS = 7;
@@ -46,7 +48,8 @@ export class Cloud {
   private up = new Vector3(0, 1, 0);
   private dir = new Vector3();
   private c = new Color();
-  private white = new Color(0xffffff);
+  private white = new Color(0xfbf6ea);
+  private belly = new Color(0xc9ccd6);
   private storm = new Color(0x8a8fa0);
   readonly shadow: Mesh;
   readonly handShadow: Mesh;
@@ -55,7 +58,8 @@ export class Cloud {
 
   constructor() {
     const box = new BoxGeometry(1, 1, 1);
-    this.puffs = new InstancedMesh(box, new MeshLambertMaterial({ color: 0xffffff, emissive: 0x334455 }), PUFFS);
+    this.puffs = new VoxelMesh(PUFFS);
+    for (let i = 0; i < PUFFS; i++) (this.puffs as VoxelMesh).setCells(i, C.white);
     this.puffs.frustumCulled = false;
     this.offs = new Float32Array(PUFFS * 4);
     for (let i = 0; i < PUFFS; i++) {
@@ -142,7 +146,9 @@ export class Cloud {
       this.s.set(sz * (1 + sq * 0.2), sz * (1 - sq * 0.35), sz * (1 + sq * 0.2));
       this.m.compose(this.p, this.q.identity(), this.s);
       this.puffs.setMatrixAt(i, this.m);
-      this.c.copy(this.white).lerp(this.storm, Math.min(1, sq * 0.8 + this.dark * 0.6));
+      // lower puffs are greyer: reads as a cloud with a belly, not a pile of boxes
+      this.c.copy(this.white).lerp(this.belly, Math.max(0, Math.min(1, 0.5 - this.offs[o + 1] * 40)));
+      this.c.lerp(this.storm, Math.min(1, sq * 0.8 + this.dark * 0.6));
       this.puffs.setColorAt(i, this.c);
     }
     this.puffs.instanceMatrix.needsUpdate = true;

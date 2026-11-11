@@ -179,12 +179,12 @@ export class GodSystem extends createSystem({}) {
     this.banner = new Banner();
     this.witnessBubble = new Bubble(0.02, 0.02, 32);
     this.witnessBubble.set('!', '#fff3b0', '#3a2a1a');
-    this.petitionSign = new Bubble(0.12, 0.022, 256);
+    this.petitionSign = new Bubble(0.168, 0.0378, 120);
 
     // HUD plate on the front rim, tipped back toward the player.
     this.hud.root.position.set(0, -0.03, 0.29);
     this.hud.root.rotation.x = -0.75;
-    this.banner.root.position.set(0, 0.3, -0.2);
+    this.banner.root.position.set(-0.24, 0.2, -0.14);
 
     this.seed = this.buildSeed();
     this.buildRaft();
@@ -474,9 +474,33 @@ export class GodSystem extends createSystem({}) {
     } else if (this.phase === 'festival') this.updateFestival(dt);
     else if (this.phase === 'end') this.updateEnd(realDt, dt);
 
+    if (this.phase === 'attract' && this.visibilityState.peek() === VisibilityState.NonImmersive) this.frameAttract(realDt);
     this.updateSim(dt);
     this.updateTablets(realDt);
     this.updateVisuals(realDt, dt);
+  }
+
+  private attractYaw = 0.6;
+  private camW = new Vector3();
+  private camFwd = new Vector3();
+  private camRight = new Vector3();
+  /** Title screen: frame the live island to the right of the copy, turning slowly. */
+  private frameAttract(dt: number) {
+    const cam = this.world.camera;
+    cam.updateMatrixWorld();
+    cam.getWorldPosition(this.camW);
+    this.camFwd.set(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(this.tmp2Quat));
+    this.camFwd.y = 0;
+    this.camFwd.normalize();
+    this.camRight.set(-this.camFwd.z, 0, this.camFwd.x);
+    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+    const narrow = window.innerWidth <= 820 || aspect < 1;
+    const dist = narrow ? 1.25 : 0.66;
+    const side = narrow ? 0 : 0.3 * Math.min(1.25, aspect / 1.78);
+    Stage.root.position.copy(this.camW).addScaledVector(this.camFwd, dist).addScaledVector(this.camRight, side);
+    Stage.root.position.y = this.camW.y - (narrow ? -0.18 : 0.17);
+    this.attractYaw += dt * 0.12;
+    Stage.root.rotation.set(narrow ? 0.62 : 0, this.attractYaw, 0);
   }
 
   private lightsStyled = false;
@@ -1695,7 +1719,10 @@ export class GodSystem extends createSystem({}) {
     // banner floats over the back of the island, facing the player
     this.banner.root.lookAt(this.headW);
 
-    // HUD
+    // HUD (hidden on the title screen)
+    const onTitle = this.phase === 'attract';
+    this.hud.root.visible = !onTitle;
+    this.seed.visible = this.seed.visible && !onTitle;
     const hint = this.phase === 'play' ? (this.hintIdx >= 0 ? this.hints[this.hintIdx].text : this.statusLine()) : '';
     this.hud.set(
       {

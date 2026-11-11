@@ -15,9 +15,10 @@ import {
 } from '@iwsdk/core';
 import type { LawId } from './village.js';
 import { drawText, textWidth, wrapText } from './pixfont.js';
+import { drawFrame, INK } from './hud.js';
 
-const W = 96;
-const H = 124;
+const W = 72;
+const H = 92;
 
 export class Tablet {
   root = new Group();
@@ -49,11 +50,11 @@ export class Tablet {
     this.tex.magFilter = NearestFilter;
     this.tex.minFilter = NearestFilter;
     this.tex.colorSpace = SRGBColorSpace;
-    this.lines = wrapText(this.text, 14);
+    this.lines = wrapText(this.text, 10);
 
-    const w = 0.095;
-    const h = 0.123;
-    this.stone = new Mesh(new BoxGeometry(w + 0.006, h + 0.006, 0.008), new MeshLambertMaterial({ color: 0x8b8378 }));
+    const w = W * 0.0014;
+    const h = H * 0.0014;
+    this.stone = new Mesh(new BoxGeometry(w + 0.006, h + 0.006, 0.008), new MeshLambertMaterial({ color: 0x8d877c }));
     this.face = new Mesh(new PlaneGeometry(w, h), new MeshBasicMaterial({ map: this.tex, transparent: true }));
     this.face.position.z = 0.0042;
     this.glow = new MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: 0 });
@@ -91,30 +92,47 @@ export class Tablet {
   private draw() {
     const g = this.ctx2d;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = this.blessed ? '#e6c76a' : '#d9cfbf';
-    g.fillRect(0, 0, W, H);
-    // speckle + chipped corners: reads as carved stone at pixel scale
-    for (let i = 0; i < 70; i++) {
-      g.fillStyle = i % 2 ? (this.blessed ? '#d4ae4e' : '#c8bca9') : this.blessed ? '#f3dc8a' : '#e8dfcf';
-      g.fillRect((i * 37) % W, (i * 53) % H, 2, 2);
+    const base = this.blessed ? '#e0b23a' : '#b3ada2';
+    const dark = this.blessed ? '#a07418' : '#8a847a';
+    const light = this.blessed ? '#ffe08a' : '#d2ccc0';
+    // ink silhouette with chipped corners, stone face, bevel and speckle
+    g.fillStyle = '#241a14';
+    g.fillRect(2, 0, W - 4, H);
+    g.fillRect(0, 2, W, H - 4);
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.fillStyle = base;
+    g.fillRect(2, 2, W - 4, H - 4);
+    g.fillStyle = light;
+    g.fillRect(2, 2, W - 4, 1);
+    g.fillRect(2, 2, 1, H - 4);
+    g.fillStyle = dark;
+    g.fillRect(2, H - 3, W - 4, 1);
+    g.fillRect(W - 3, 2, 1, H - 4);
+    let sd = 7;
+    const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 90; i++) {
+      g.fillStyle = rnd() < 0.5 ? dark : light;
+      g.fillRect(3 + Math.floor(rnd() * (W - 6)), 3 + Math.floor(rnd() * (H - 6)), 1, 1);
     }
-    g.clearRect(0, 0, 3, 3);
-    g.clearRect(W - 3, 0, 3, 3);
-    g.clearRect(0, H - 3, 3, 3);
-    g.clearRect(W - 3, H - 3, 3, 3);
-    const ink = this.blessed ? '#6b4a10' : '#4a3a2c';
-    const cut = this.blessed ? '#fff1b8' : '#f4eee2';
-    drawText(g, this.numeral, W / 2, 6, 2, ink, 'center', cut);
+    // a crack and two chips: carved by hand, not printed
+    g.fillStyle = dark;
+    for (let k = 0; k < 6; k++) g.fillRect(W - 12 + k, H - 14 + (k % 2), 1, 1);
+    g.fillStyle = '#241a14';
+    g.fillRect(W - 4, 6, 1, 2);
+    g.fillRect(5, H - 4, 2, 1);
+    const ink = this.blessed ? '#4a300a' : '#2e2620';
+    const cut = this.blessed ? '#fff1b8' : '#dcd6ca';
+    drawText(g, this.numeral, W / 2, 5, 1, ink, 'center', cut);
     g.fillStyle = ink;
-    g.fillRect(14, 24, W - 28, 2);
+    g.fillRect(10, 15, W - 20, 1);
     let left = this.shown;
-    let y = 33;
+    let y = 20;
     for (const line of this.lines) {
       if (left <= 0) break;
       const part = line.slice(0, left);
       left -= line.length + 1;
       drawText(g, part, W / 2, y, 1, ink, 'center', cut);
-      y += 10;
+      y += 9;
     }
     this.tex.needsUpdate = true;
   }
@@ -152,6 +170,14 @@ export class Bubble {
     const w = this.canvas.width;
     const h = this.canvas.height;
     g.clearRect(0, 0, w, h);
+    if (w >= 96) {
+      // signboards: carved wood frame around paper, one pixel density
+      const r = drawFrame(g, w, h, 'wood');
+      const scale = Math.max(1, Math.min(2, Math.floor((r.h - 2) / 8), Math.floor((r.w - 4) / Math.max(1, textWidth(text)))));
+      drawText(g, text, w / 2, r.y + Math.round((r.h - 7 * scale) / 2), scale, INK, 'center');
+      this.tex.needsUpdate = true;
+      return;
+    }
     g.fillStyle = bg;
     g.fillRect(2, 2, w - 4, h - 4);
     g.fillStyle = fg;

@@ -105,7 +105,7 @@ export class StagePlacementSystem extends createSystem({}) {
       }
     }
 
-    const want = this.holder ? 0.9 : hovering ? 0.6 : 0.2;
+    const want = this.holder ? 0.9 : hovering ? 0.6 : 0.04;
     this.ringMat.opacity += (want - this.ringMat.opacity) * 0.2;
   }
 }
