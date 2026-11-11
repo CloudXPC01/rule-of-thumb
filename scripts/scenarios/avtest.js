@@ -1,0 +1,11 @@
+const T = globalThis.T; const g = T.god();
+await T.enter(true); HIDE_EMU(); T.head(-0.5, 0);
+REC.startAudio();
+CAP('THEY ARE WATCHING YOUR HANDS', 3000);
+await T.frames(120);
+const stump = g.island.index(8, 9); g.island.setType(stump, 3);
+T.lookAtVillager(0); await T.frames(30);
+await T.plant(stump, g.witness);
+await T.frames(240);
+const meta = await REC.stopAudio('audio');
+return { meta, tablets: g.tablets.map(t => t.law) };

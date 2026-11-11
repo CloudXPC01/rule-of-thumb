@@ -160,4 +160,13 @@ export const Sfx = {
   setMaster(v: number) {
     if (master) master.gain.value = v;
   },
+  /** A MediaStream of everything the game plays (used to record gameplay video). */
+  tap(): MediaStream | null {
+    const a = ac();
+    if (!a || !master) return null;
+    const dest = a.createMediaStreamDestination();
+    master.connect(dest);
+    return dest.stream;
+  },
 };
+(globalThis as unknown as { __sfx: typeof Sfx }).__sfx = Sfx;

@@ -44,6 +44,71 @@ await page.exposeFunction('__shot', async (name) => {
   return file;
 });
 
+const videoStartWall = Date.now(); // recordVideo starts with the page
+await page.exposeFunction('__saveAudio', async (name, b64, startWall) => {
+  const file = path.join(outDir, `${name}.webm`);
+  fs.writeFileSync(file, Buffer.from(b64, 'base64'));
+  const meta = { file, offsetSec: (startWall - videoStartWall) / 1000 };
+  fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify(meta));
+  return meta;
+});
+await page.addInitScript(() => {
+  // In-page recording helpers for video scenarios.
+  globalThis.REC = {
+    rec: null, chunks: [], start: 0,
+    startAudio() {
+      const stream = globalThis.__sfx?.tap();
+      if (!stream) return false;
+      this.chunks = [];
+      this.rec = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 192000 });
+      this.rec.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
+      this.start = Date.now();
+      this.rec.start(500);
+      return true;
+    },
+    async stopAudio(name = 'audio') {
+      if (!this.rec) return null;
+      await new Promise((r) => { this.rec.onstop = r; this.rec.stop(); });
+      const buf = new Uint8Array(await new Blob(this.chunks).arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      return globalThis.__saveAudio(name, btoa(bin), this.start);
+    },
+  };
+  // Caption overlay (lower third, pixel style)
+  globalThis.CAP = (text, ms = 3000) => {
+    let el = document.getElementById('cap-overlay');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cap-overlay';
+      el.style.cssText = 'position:fixed;left:50%;bottom:7%;transform:translateX(-50%);z-index:99999;padding:12px 22px;background:rgba(43,33,25,.88);color:#ffe7a8;font:600 26px/1.25 ui-monospace,Consolas,monospace;letter-spacing:.04em;border:3px solid #6b3f1f;box-shadow:4px 4px 0 #1a120c;text-align:center;max-width:80%;transition:opacity .35s;opacity:0;pointer-events:none';
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.style.opacity = text ? '1' : '0';
+    clearTimeout(el._t);
+    if (ms > 0) el._t = setTimeout(() => (el.style.opacity = '0'), ms);
+  };
+  // Hide emulator chrome (control panels, badges) for clean capture
+  globalThis.HIDE_EMU = () => {
+    for (const el of document.querySelectorAll('body *')) {
+      const t = el.childElementCount === 0 ? el.textContent ?? '' : '';
+      if (/Remote Control Active|Enter XR/.test(t)) {
+        let n = el;
+        while (n.parentElement && n.parentElement !== document.body) n = n.parentElement;
+        n.style.display = 'none';
+      }
+    }
+    // emulator dev UI lives in shadow-DOM hosts (badge, panels, edge glow)
+    for (const el of document.querySelectorAll('body *')) {
+      if (el.shadowRoot && !el.querySelector('canvas')) el.style.display = 'none';
+    }
+    const st = document.createElement('style');
+    st.textContent = '[class*="iwer"],[id*="iwer"],[class*="devui"]{display:none!important}';
+    document.head.appendChild(st);
+  };
+});
+
 const t0 = Date.now();
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForFunction(() => globalThis.__god && globalThis.T && document.querySelector('#rot-enter'), null, { timeout: 120000 });
