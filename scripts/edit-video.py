@@ -51,8 +51,8 @@ work.mkdir(exist_ok=True)
 # 1) mux game audio onto the full recording (audio starts later than video)
 full = work / 'full.mp4'
 subprocess.run([
-    'ffmpeg', '-y', '-v', 'error', '-i', str(video), '-itsoffset', f"{audio['offsetSec']:.3f}", '-i', str(audio['file']),
-    '-filter_complex', f'[0:v]fps={FPS},scale={W}:{H}:flags=lanczos,format=yuv420p[v];[1:a]aresample=48000,apad[a]',
+    'ffmpeg', '-y', '-v', 'error', '-i', str(video), '-i', str(audio['file']),
+    '-filter_complex', f'[0:v]fps={FPS},scale={W}:{H}:flags=lanczos,format=yuv420p[v];[1:a]aresample=48000,adelay={int(audio["offsetSec"] * 1000)}:all=1,apad[a]',
     '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-crf', '16', '-preset', 'medium', '-c:a', 'aac', '-b:a', '256k', '-shortest', str(full),
 ], check=True)
 
@@ -82,17 +82,24 @@ if card:
     ], check=True)
     clips.append((endclip, 5.0))
 
-# 4) crossfade chain
+# 4) crossfade chain (normalise timebase/format; use measured durations)
+def dur(path):
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', str(path)], capture_output=True, text=True).stdout
+    return float(out.strip())
+clips = [(c, dur(c)) for c, _ in clips]
 inputs = []
 for c, _ in clips:
     inputs += ['-i', str(c)]
 fc = []
-vprev, aprev = '[0:v]', '[0:a]'
+for k in range(len(clips)):
+    fc.append(f'[{k}:v]settb=AVTB,fps={FPS},scale={W}:{H},setsar=1,format=yuv420p[nv{k}]')
+    fc.append(f'[{k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[na{k}]')
+vprev, aprev = '[nv0]', '[na0]'
 acc = clips[0][1]
 for k in range(1, len(clips)):
     off = acc - XF
-    fc.append(f'{vprev}[{k}:v]xfade=transition=fade:duration={XF}:offset={off:.3f}[v{k}]')
-    fc.append(f'{aprev}[{k}:a]acrossfade=d={XF}[a{k}]')
+    fc.append(f'{vprev}[nv{k}]xfade=transition=fade:duration={XF}:offset={off:.3f}[v{k}]')
+    fc.append(f'{aprev}[na{k}]acrossfade=d={XF}[a{k}]')
     vprev, aprev = f'[v{k}]', f'[a{k}]'
     acc = acc + clips[k][1] - XF
 fc.append(f'{aprev}loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st={acc - 1.2:.3f}:d=1.2[aout]')

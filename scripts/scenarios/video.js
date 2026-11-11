@@ -15,7 +15,10 @@ const nearestVillagerTo = (x, z) => { let b = 0, bd = 1e9; g.village.villagers.f
 // --- camera: the player's head. Smoothly move position and aim. ---
 const cam = { pos: [0, 1.6, 0], look: [0, 0, 0] };
 function setHeadPos(p) { d.position.set(p[0], p[1], p[2]); }
+const ZOOM = 0.35; // push every camera position this far toward what it looks at
 async function camTo(pos, lookLocal, sec, ease = true) {
+  const lw = T.toWorld(lookLocal[0], lookLocal[1], lookLocal[2]);
+  pos = [pos[0] + (lw.x - pos[0]) * ZOOM, pos[1] + (lw.y - pos[1]) * ZOOM, pos[2] + (lw.z - pos[2]) * ZOOM];
   const p0 = [d.position.x, d.position.y, d.position.z];
   const n = Math.max(1, Math.round(sec * 60));
   for (let i = 1; i <= n; i++) {
@@ -32,6 +35,7 @@ async function holdGaze(id, sec) { const n = Math.round(sec * 60); for (let i = 
 try { localStorage.clear(); } catch {}
 
 // ===== 1. Title page =====
+HIDE_EMU();
 MARK('title');
 await wait(4.5);
 MARK('enter');
