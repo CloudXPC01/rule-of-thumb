@@ -146,6 +146,7 @@ export class GodSystem extends createSystem({}) {
   private crushed: LawId[] = [];
   private blessHold = new Map<Tablet, number>();
   private campfireT = 0;
+  private dustT = 7;
   private forcedDust = false;
   private lookedUp = false;
   private hints: Hint[] = [];
@@ -306,6 +307,12 @@ export class GodSystem extends createSystem({}) {
         Sfx.hut();
         this.islandRender.popTile(tile);
       },
+      onLeave: (v) => {
+        // a hungry family gives up and walks off the edge
+        fx.burst(v.x, v.y + 0.01, v.z, 8, [0xd2b072, 0xc49d5e], 0.06, 0.004, 0.8);
+        Sfx.gasp(v.id);
+        if (this.witness >= this.village.villagers.length) this.witness = -1;
+      },
       onBirth: (v) => {
         v.hop = 1;
         Sfx.pop();
@@ -358,6 +365,7 @@ export class GodSystem extends createSystem({}) {
     this.rainedFor = this.rainOnDust = this.rainOnPond = this.smothered = 0;
     this.lightningCount = 0;
     this.campfireT = 14;
+    this.dustT = 7;
     this.forcedDust = false;
     this.lookedUp = false;
     this.festT = 0;
@@ -1042,6 +1050,10 @@ export class GodSystem extends createSystem({}) {
           shrink: false,
         });
       }
+    } else {
+      // omens need rain to be falling right now, not remembered rain
+      this.rainOnDust = 0;
+      this.rainOnPond = 0;
     }
 
     // --- tile tick at 4 Hz ---
@@ -1124,8 +1136,8 @@ export class GodSystem extends createSystem({}) {
             const nt = isl.tiles[n].type;
             if (nt === Tile.Stump || nt === Tile.Dust) barren++;
           }
-          const chance = barren >= 2 ? 0.06 : t.age > 50 ? 0.02 : 0;
-          if (t.age > 10 && t.claimedBy < 0 && Math.random() < chance * step) {
+          const chance = barren >= 3 ? 0.035 : barren >= 1 && t.age > 60 ? 0.012 : 0;
+          if (t.age > 20 && t.claimedBy < 0 && Math.random() < chance * step) {
             isl.setType(i, Tile.Dust);
             this.puff(i);
           }
@@ -1139,17 +1151,6 @@ export class GodSystem extends createSystem({}) {
             this.fx.burst(this.pt.x, this.pt.y + 0.004, this.pt.z, 8, [0x6dbb45, 0x8be05a], 0.07, 0.003, 0.7);
             Sfx.pop();
             break;
-          }
-          if (!playing || t.wet > 0.2) break;
-          // dust creeps into grass
-          if (Math.random() < step * 0.014) {
-            isl.neighbours(i, this.nb);
-            const n = this.nb[Math.floor(Math.random() * this.nb.length)];
-            const nt = isl.tiles[n];
-            if (n !== undefined && nt.type === Tile.Grass && nt.wet < 0.2 && nt.claimedBy < 0) {
-              isl.setType(n, Tile.Dust);
-              this.puff(n);
-            }
           }
           break;
         }
@@ -1189,6 +1190,15 @@ export class GodSystem extends createSystem({}) {
       }
     }
 
+    // dust creeps into grass on a global clock: linear pressure the player can outpace
+    if (playing) {
+      this.dustT -= step;
+      if (this.dustT <= 0) {
+        this.dustT = this.age === 0 ? 10 : this.age === 1 ? 7 : 5.5;
+        this.creepDust();
+      }
+    }
+
     // campfires in the Age of Smoke
     if (this.phase === 'play' && this.age >= 1 && !this.village.laws.has('noWarmth')) {
       this.campfireT -= step;
@@ -1198,8 +1208,31 @@ export class GodSystem extends createSystem({}) {
       }
     }
 
+    // fear fades slowly; faith drifts back toward devotion when the Hand is kind
+    this.fear = Math.max(0, this.fear - step * 0.003);
+
     // land health (eased so the HUD bar breathes)
     this.health += (isl.health() - this.health) * 0.2;
+  }
+
+  private creepDust() {
+    const isl = this.island;
+    // pick a random dry dust tile and spread into one dry grass neighbour
+    const n = isl.tiles.length;
+    const start = Math.floor(Math.random() * n);
+    for (let k = 0; k < n; k++) {
+      const i = (start + k) % n;
+      const t = isl.tiles[i];
+      if (t.type !== Tile.Dust || t.wet > 0.2) continue;
+      isl.neighbours(i, this.nb);
+      const j = this.nb[Math.floor(Math.random() * this.nb.length)];
+      const nt = j !== undefined ? isl.tiles[j] : null;
+      if (nt && nt.type === Tile.Grass && nt.wet < 0.2 && nt.claimedBy < 0) {
+        isl.setType(j, Tile.Dust);
+        this.puff(j);
+        return;
+      }
+    }
   }
 
   private lightCampfire() {
@@ -1209,7 +1242,7 @@ export class GodSystem extends createSystem({}) {
     isl.neighbours(hut, this.nb);
     for (const n of this.nb) {
       const t = isl.tiles[n];
-      if (t.type === Tile.Grass && t.fire <= 0 && t.wet < 0.3) {
+      if ((t.type === Tile.Grass || t.type === Tile.Dust || t.type === Tile.Stump) && t.fire <= 0 && t.wet < 0.3) {
         t.fire = 0.25;
         t.burnt = 0;
         isl.dirty.add(n);
@@ -1335,7 +1368,7 @@ export class GodSystem extends createSystem({}) {
     const health = this.island.health();
     let e: Ending;
     if (health < 0.4) e = 'exodus';
-    else if (health >= 0.8 && pop >= 12) e = 'harmony';
+    else if (health >= 0.72 && pop >= 12 && this.fear < 0.45) e = 'harmony';
     else e = 'zealotry';
     this.ending = e;
     this.phase = 'end';
@@ -1347,7 +1380,7 @@ export class GodSystem extends createSystem({}) {
       this.banner.show('HARMONY', `${pop} SOULS. ${laws} LAWS. THEY TEND THE LAND AS YOU DID. ${book}. PINCH TO PLAY AGAIN.`, 0, 'gold');
       Sfx.fanfare();
     } else if (e === 'zealotry') {
-      this.banner.show('ZEALOTRY', `THE LAND IS GREEN, BUT ${pop} SOULS WATCH THE SKY IN FEAR. ${book}. PINCH TO PLAY AGAIN.`, 0, 'stone');
+      this.banner.show('ZEALOTRY', `THE LAND LIVES, BUT ${pop} SOULS WATCH THE SKY IN FEAR. THEY OBEY. THEY DO NOT SING. ${book}. PINCH TO PLAY AGAIN.`, 0, 'stone');
     } else {
       this.banner.show('EXODUS', `THE LAND IS DUST. THEY SAIL OFF THE EDGE OF YOUR DESK. ${book}. PINCH TO PLAY AGAIN.`, 0, 'night');
       this.startExodus();

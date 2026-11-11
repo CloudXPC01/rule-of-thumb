@@ -81,11 +81,12 @@ export interface VillageEvents {
   onFish?(tile: number, v: Villager): void;
   onThrowFish?(v: Villager): void;
   onWaterDust?(tile: number, v: Villager): void;
+  onLeave?(v: Villager): void;
 }
 
 const SPEED = 0.03; // m/s on a 0.5 m island
 export const MAX_VILLAGERS = 16;
-export const WOOD_PER_HUT = 5;
+export const WOOD_PER_HUT = 6;
 
 export class Village {
   villagers: Villager[] = [];
@@ -104,6 +105,8 @@ export class Village {
   private rng = 12345;
   private pt = { x: 0, y: 0, z: 0 };
   private pt2 = { x: 0, y: 0, z: 0 };
+  /** Seconds the village has had no food. */
+  private starve = 0;
 
   constructor(private island: Island) {
     for (let k = 0; k < 5; k++) this.spawn(island.centre);
@@ -174,6 +177,13 @@ export class Village {
   update(dt: number, time: number) {
     const isl = this.island;
     this.food = Math.max(0, this.food - dt * this.villagers.length * this.hunger);
+    this.starve = this.food <= 0 && !this.festival ? this.starve + dt : 0;
+    if (this.starve > 25 && this.villagers.length > 2) {
+      this.starve = 0;
+      const gone = this.villagers.pop()!;
+      this.release(gone);
+      this.events.onLeave?.(gone);
+    }
 
     for (const v of this.villagers) {
       v.bob += dt * (v.state === VState.Walk || v.state === VState.Carry || v.state === VState.Flee ? 14 : 3);
@@ -350,13 +360,13 @@ export class Village {
           if (this.walkTo(v, v.target, dt * Math.max(0.7, workSpeed))) {
             if (v.carrying === 1) {
               isl.wood++;
-              if (isl.wood >= WOOD_PER_HUT) this.buildHut();
+              if (isl.wood >= WOOD_PER_HUT && this.food >= this.villagers.length) this.buildHut();
             } else if (v.carrying === 2) {
               this.food += 3;
             }
             v.carrying = 0;
             v.state = VState.Idle;
-            v.timer = (1.4 + this.rand() * 2.6) / this.workRate;
+            v.timer = (2.5 + this.rand() * 3.5) / this.workRate;
           }
           break;
       }
@@ -400,7 +410,7 @@ export class Village {
       if (quota && tile.fish < 2) return false;
       return true;
     };
-    if (hungry || this.rand() < 0.3) {
+    if (hungry || this.rand() < 0.08) {
       const pond = this.nearest(v, fishOk);
       if (pond >= 0) {
         this.claim(v, pond);
@@ -410,7 +420,7 @@ export class Village {
       }
     }
     // Not everyone chops at once: keeps the forest from vanishing in a minute.
-    const cap = Math.max(2, Math.ceil(this.villagers.length * 0.45));
+    const cap = 1 + Math.floor(this.villagers.length / 7);
     if (this.choppers() < cap) {
       const holy = this.laws.has('stumpsHoly');
       const tree = this.nearest(v, (t) => {
@@ -439,7 +449,7 @@ export class Village {
     switch (v.job) {
       case Job.Chop:
         v.state = VState.Chop;
-        v.timer = 3.2;
+        v.timer = 5.5;
         v.chip = 0;
         break;
       case Job.Fish:
