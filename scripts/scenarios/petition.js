@@ -1,0 +1,15 @@
+const T = globalThis.T; const g = T.god(); const log = [];
+await T.enter(true); HIDE_EMU(); T.head(-0.5, 0);
+g.readings = 1; g.petitionT = 0.01;
+await T.frames(20);
+log.push('petition: ' + JSON.stringify(g.petition));
+const v = g.village.villagers[g.petition?.who ?? 0];
+await T.frames(30);
+await __shot('petition-sign');
+log.push('hint: ' + (g.hintIdx >= 0 ? g.hints[g.hintIdx].text : '-'));
+T.handRot('right', Math.PI, 0, 0); await T.pose('right', 'flat', 4);
+await T.handAt('right', v.x, 0.12, v.z, 'palm');
+await T.frames(10);
+await __shot('petition-yes');
+log.push('answered: ' + g.petitionsAnswered + ' petition now ' + JSON.stringify(g.petition));
+return log;

@@ -490,7 +490,7 @@ export class Village {
     if (v.job === Job.Chop) v.job = Job.None;
   }
 
-  private buildHut() {
+  buildHut() {
     const isl = this.island;
     const p = isl.centreOf(isl.centre, this.pt);
     const px = p.x;

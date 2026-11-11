@@ -14,7 +14,7 @@ import {
   SRGBColorSpace,
 } from '@iwsdk/core';
 import type { LawId } from './village.js';
-import { drawText, wrapText } from './pixfont.js';
+import { drawText, textWidth, wrapText } from './pixfont.js';
 
 const W = 96;
 const H = 124;
@@ -159,7 +159,7 @@ export class Bubble {
     g.fillRect(w - 2, 2, 2, h - 4);
     g.fillRect(2, 0, w - 4, 2);
     g.fillRect(2, h - 2, w - 4, 2);
-    const scale = Math.max(1, Math.floor((h - 6) / 8));
+    const scale = Math.max(1, Math.min(Math.floor((h - 6) / 8), Math.floor((w - 8) / Math.max(1, textWidth(text)))));
     drawText(g, text, w / 2, Math.round((h - 7 * scale) / 2), scale, fg, 'center');
     this.tex.needsUpdate = true;
   }

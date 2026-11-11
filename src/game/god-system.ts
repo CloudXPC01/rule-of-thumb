@@ -49,7 +49,7 @@ import {
 } from './scribe.js';
 import { Sfx } from './sfx.js';
 import { Bubble, Tablet } from './tablet.js';
-import { Village, VState, type LawId, type Villager } from './village.js';
+import { Village, VState, WOOD_PER_HUT, type LawId, type Villager } from './village.js';
 import { VillageRender } from './village-render.js';
 
 type Phase = 'attract' | 'play' | 'festival' | 'end';
@@ -176,6 +176,7 @@ export class GodSystem extends createSystem({}) {
     this.banner = new Banner();
     this.witnessBubble = new Bubble(0.02, 0.02, 32);
     this.witnessBubble.set('!', '#fff3b0', '#3a2a1a');
+    this.petitionSign = new Bubble(0.12, 0.022, 256);
 
     // HUD plate on the front rim, tipped back toward the player.
     this.hud.root.position.set(0, -0.03, 0.29);
@@ -201,6 +202,7 @@ export class GodSystem extends createSystem({}) {
       this.hud.root,
       this.banner.root,
       this.witnessBubble.mesh,
+      this.petitionSign.mesh,
       this.seed,
       this.flash,
       this.dark,
@@ -365,6 +367,9 @@ export class GodSystem extends createSystem({}) {
     this.rainedFor = this.rainOnDust = this.rainOnPond = this.smothered = 0;
     this.lightningCount = 0;
     this.campfireT = 14;
+    this.petition = null;
+    this.petitionT = 75;
+    this.petitionsAnswered = 0;
     this.dustT = 7;
     this.forcedDust = false;
     this.lookedUp = false;
@@ -431,6 +436,11 @@ export class GodSystem extends createSystem({}) {
         done: () => has('rainPond'),
       },
       {
+        text: 'THEY ASK YOU! PALM UP FOR YES. FIST FOR NO.',
+        avail: () => this.petition !== null,
+        done: () => this.petitionsAnswered > 0,
+      },
+      {
         text: 'POKE THE CLOUD FOR LIGHTNING. THEY WILL FEAR YOU.',
         avail: () => this.clock > 270,
         done: () => this.lightningCount > 0 || this.clock > 330,
@@ -450,6 +460,7 @@ export class GodSystem extends createSystem({}) {
       dt = 0;
     }
 
+    this.frameDt = dt;
     this.updatePoses();
     if (this.phase === 'play' || this.phase === 'festival') this.updateHands(realDt);
     if (this.phase === 'play') {
@@ -720,6 +731,13 @@ export class GodSystem extends createSystem({}) {
   private tmp2Quat = new Quaternion();
   private bubblePop = 0;
 
+  // --- petitions: a villager holds up a sign; palm up = yes, fist = no ---
+  private petitionSign!: Bubble;
+  private petition: { who: number; kind: number; t: number } | null = null;
+  private petitionT = 75;
+  private petitionsAnswered = 0;
+  private frameDt = 0;
+
   /** The current witness, if they are still looking up at the Hand. */
   private activeWitness(): Villager | null {
     if (this.witness < 0) return null;
@@ -900,6 +918,114 @@ export class GodSystem extends createSystem({}) {
   // Timeline: Ages, scripted beats, hints
   // ---------------------------------------------------------------------------
 
+  private static readonly PETITIONS = [
+    { ask: 'CUT THE OLD GROVE?', yes: 'THE HAND SAYS CUT!', no: 'THE GROVE STANDS.' },
+    { ask: 'MORE NETS?', yes: 'NETS FOR ALL!', no: 'WE FISH LESS.' },
+    { ask: 'A FEAST OF FIRE?', yes: 'FEAST TONIGHT!', no: 'NO FEAST. SAD.' },
+    { ask: 'BUILD A NEW HUT?', yes: 'WE BUILD!', no: 'WE WAIT.' },
+  ];
+
+  /** Every ~70 s after the first law a villager comes forward with a question. */
+  private updatePetition() {
+    const vs = this.village.villagers;
+    if (this.petition) {
+      const v = vs[this.petition.who];
+      if (!v || v.state === VState.Flee) {
+        this.petition = null;
+        return;
+      }
+      v.watching = Math.max(v.watching, 1); // stays put, looking up
+      this.petition.t -= this.frameDt;
+      // answer with the nearest hand, anywhere above the island
+      for (const side of HAND_SIDES) {
+        const h = Hands[side];
+        if (!h.tracked) continue;
+        const p = this.palmL[side];
+        if (Math.hypot(p.x, p.z) > 0.32 || p.y < -0.02 || p.y > 0.35) continue;
+        if (h.palmUp && h.open) return this.answerPetition(true);
+        if (h.fistStarted) return this.answerPetition(false);
+      }
+      if (this.petition.t <= 0) this.answerPetition(this.village.rand() < 0.5, true);
+      return;
+    }
+    if (this.readings === 0 || this.chiselling || this.pendingReading || !vs.length) return;
+    this.petitionT -= this.frameDt;
+    if (this.petitionT > 0) return;
+    this.petitionT = 60 + Math.random() * 25;
+    // a villager near the front of the island asks
+    let who = 0;
+    let best = -1e9;
+    for (let i = 0; i < vs.length; i++) {
+      const s = vs[i].z - Math.abs(vs[i].x) * 0.5 + Math.random() * 0.05;
+      if (vs[i].state !== VState.Flee && s > best) {
+        best = s;
+        who = i;
+      }
+    }
+    const kind = Math.floor(Math.random() * GodSystem.PETITIONS.length);
+    this.petition = { who, kind, t: 12 };
+    vs[who].watching = 3;
+    vs[who].hop = 1;
+    Sfx.gibber(who + 7);
+    Sfx.gasp(who);
+  }
+
+  private answerPetition(yes: boolean, timedOut = false) {
+    const pet = this.petition;
+    if (!pet) return;
+    this.petition = null;
+    const def = GodSystem.PETITIONS[pet.kind];
+    const v = this.village.villagers[pet.who];
+    this.petitionsAnswered++;
+    const isl = this.island;
+    if (!timedOut) {
+      if (yes) Sfx.bless();
+      else Sfx.squish(0.9);
+      this.faith = Math.min(1, this.faith + 0.04); // being answered at all is a gift
+    }
+    if (v) {
+      v.hop = 1;
+      v.watching = 0;
+      this.glow.burst(v.x, v.y + 0.03, v.z, 10, yes ? [0xffd34d, 0xfff1a8] : [0x9a8f80, 0xd9cfbf], 0.08, 0.003, 0.8);
+    }
+    switch (pet.kind) {
+      case 0: // cut the old grove
+        if (yes) {
+          let n = 0;
+          for (let i = 0; i < isl.tiles.length && n < 4; i++) {
+            if (isl.tiles[i].type === Tile.Tree && isl.tiles[i].claimedBy < 0 && Math.random() < 0.3) {
+              isl.setType(i, Tile.Stump);
+              this.islandRender.popTile(i);
+              n++;
+            }
+          }
+          isl.wood += n;
+          Sfx.fall();
+        }
+        break;
+      case 1: // more nets
+        if (yes) {
+          this.village.food += 8;
+          for (const t of isl.tiles) if (t.type === Tile.Water && t.fish > 0) t.fish--;
+          for (let i = 0; i < isl.tiles.length; i++) if (isl.tiles[i].type === Tile.Water) isl.dirty.add(i);
+        }
+        break;
+      case 2: // feast of fire
+        if (yes) {
+          this.lightCampfire();
+          this.faith = Math.min(1, this.faith + 0.05);
+        } else this.fear = Math.min(1, this.fear + 0.02);
+        break;
+      case 3: // build a hut
+        if (yes && isl.wood >= 3) {
+          isl.wood += WOOD_PER_HUT - 3; // the Hand pays the rest
+          this.village.buildHut();
+        }
+        break;
+    }
+    this.banner.show(timedOut ? (yes ? 'THEY DECIDED: YES' : 'THEY DECIDED: NO') : yes ? def.yes : def.no, timedOut ? 'THE HAND WAS SILENT' : yes ? 'PALM UP: THE HAND AGREES' : 'FIST: THE HAND REFUSES', 2.6, yes ? 'gold' : 'stone');
+  }
+
   private updateTimeline() {
     const want = this.clock >= AGE3_AT ? 2 : this.clock >= AGE2_AT ? 1 : 0;
     if (want !== this.age) {
@@ -929,6 +1055,7 @@ export class GodSystem extends createSystem({}) {
       this.forcedDust = true;
       if (this.island.count(Tile.Dust) === 0) this.forceDust();
     }
+    this.updatePetition();
     if (this.clock >= FESTIVAL_AT) this.beginFestival();
 
     // hint selection
@@ -1481,6 +1608,17 @@ export class GodSystem extends createSystem({}) {
     this.fx.update(dt > 0 ? dt : realDt * 0.05);
     this.glow.update(realDt);
     this.banner.update(realDt);
+
+    // petition sign held above the asker's head
+    const ps = this.petitionSign.mesh;
+    const pet = this.petition;
+    const asker = pet ? this.village.villagers[pet.who] : null;
+    if (pet && asker && this.phase === 'play') {
+      ps.visible = true;
+      this.petitionSign.set(GodSystem.PETITIONS[pet.kind].ask, '#fff8e6', '#5a2a14');
+      ps.position.set(asker.x, asker.y + 0.06 + Math.sin(performance.now() * 0.005) * 0.002, asker.z);
+      ps.lookAt(this.headW);
+    } else ps.visible = false;
 
     // witness "!" bubble above the witness's head
     const w = this.activeWitness();
