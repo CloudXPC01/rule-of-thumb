@@ -15,6 +15,8 @@
  */
 import {
   BackSide,
+  DirectionalLight,
+  HemisphereLight,
   BoxGeometry,
   createSystem,
   Group,
@@ -48,6 +50,7 @@ import {
   type Reading,
 } from './scribe.js';
 import { Sfx } from './sfx.js';
+import { STYLE } from './style.js';
 import { Bubble, Tablet } from './tablet.js';
 import { Village, VState, WOOD_PER_HUT, type LawId, type Villager } from './village.js';
 import { VillageRender } from './village-render.js';
@@ -272,7 +275,7 @@ export class GodSystem extends createSystem({}) {
     for (const t of this.tablets) this.removeTablet(t);
     this.tablets.length = 0;
 
-    this.island = new Island(7);
+    this.island = new Island(7, STYLE.forest);
     this.village = new Village(this.island);
     this.islandRender = new IslandRender(this.island);
     this.villageRender = new VillageRender(this.village);
@@ -461,6 +464,7 @@ export class GodSystem extends createSystem({}) {
     }
 
     this.frameDt = dt;
+    if (!this.lightsStyled) this.styleLights();
     this.updatePoses();
     if (this.phase === 'play' || this.phase === 'festival') this.updateHands(realDt);
     if (this.phase === 'play') {
@@ -473,6 +477,27 @@ export class GodSystem extends createSystem({}) {
     this.updateSim(dt);
     this.updateTablets(realDt);
     this.updateVisuals(realDt, dt);
+  }
+
+  private lightsStyled = false;
+  /** Apply the art style's light colours to the scene's key + fill lights. */
+  private styleLights() {
+    let found = 0;
+    this.world.scene.traverse((o) => {
+      if ((o as DirectionalLight).isDirectionalLight) {
+        const l = o as DirectionalLight;
+        l.color.set(STYLE.pal.sun);
+        l.intensity = STYLE.pal.sunI * 1.25;
+        found++;
+      } else if ((o as HemisphereLight).isHemisphereLight) {
+        const l = o as HemisphereLight;
+        l.color.set(STYLE.pal.hemiSky);
+        l.groundColor.set(STYLE.pal.hemiGround);
+        l.intensity = STYLE.pal.hemiI * 1.1;
+        found++;
+      }
+    });
+    if (found >= 2) this.lightsStyled = true;
   }
 
   private updatePoses() {
@@ -1663,6 +1688,7 @@ export class GodSystem extends createSystem({}) {
       if (this.flashMat.opacity <= 0) this.flash.visible = false;
     }
     this.darkMat.opacity += (this.darkWant - this.darkMat.opacity) * Math.min(1, realDt * 1.2);
+    this.islandRender.setNight(this.phase === 'festival' && this.festStage >= 2 ? 1 : this.darkMat.opacity > 0.25 ? 1 : 0);
     this.dark.visible = this.darkMat.opacity > 0.01;
     if (this.dark.visible) this.dark.position.copy(this.headL);
 

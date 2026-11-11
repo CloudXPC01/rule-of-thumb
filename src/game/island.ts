@@ -50,7 +50,7 @@ export class Island {
   wood = 0;
   huts: number[] = [];
 
-  constructor(seed = 7) {
+  constructor(seed = 7, forest = 0.4) {
     let s = seed;
     const rand = () => ((s = (s * 16807) % 2147483647) / 2147483647);
     const c = (N - 1) / 2;
@@ -59,7 +59,9 @@ export class Island {
         const d = Math.hypot(x - c, z - c);
         const inside = d <= c + 0.35;
         const type = inside ? Tile.Grass : Tile.Void;
-        const h = inside ? Math.max(0, 0.012 - d * 0.0012) + Math.floor(rand() * 2) * 0.004 : 0;
+        // gentle dome, quantised to half-voxels; the outer ring sits one voxel lower
+        const rim = d > c - 0.6 ? -0.0045 : 0;
+        const h = inside ? Math.round((Math.max(0, 0.008 - d * 0.0009) + rim + Math.floor(rand() * 2) * 0.00225) / 0.00225) * 0.00225 : 0;
         this.tiles.push({ type, h, growth: 0, wet: 0, soak: 0, claimedBy: -1, age: 99, fish: 0, fire: 0, burnt: 0 });
       }
     }
@@ -74,18 +76,24 @@ export class Island {
         t.fish = 3;
       }
     }
-    // Forest: most of the back half and the right side.
+    // Forest: two noise-shaped groves (back-left and right), about `forest` of the land.
+    const scores: number[] = [];
     for (let i = 0; i < this.tiles.length; i++) {
       const t = this.tiles[i];
       if (t.type !== Tile.Grass) continue;
       const x = i % N;
       const z = Math.floor(i / N);
-      const back = z < 6;
-      const right = x > 8;
-      if ((back || right) && rand() < 0.58) {
-        t.type = Tile.Tree;
-        t.growth = 1;
-      } else if (rand() < 0.08) {
+      const grove =
+        Math.max(0, 1 - Math.hypot(x - 3.5, z - 3) / 6) + Math.max(0, 1 - Math.hypot(x - 10.5, z - 6.5) / 5.5);
+      scores.push(grove * 1.4 + vnoise(x * 0.35, z * 0.35, 3) * 0.8 + rand() * 0.25);
+    }
+    const sorted = scores.slice().sort((a, b) => b - a);
+    const cut = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * forest))];
+    let k = 0;
+    for (let i = 0; i < this.tiles.length; i++) {
+      const t = this.tiles[i];
+      if (t.type !== Tile.Grass) continue;
+      if (scores[k++] > cut) {
         t.type = Tile.Tree;
         t.growth = 1;
       }
@@ -180,3 +188,20 @@ export class Island {
 const NEIGH = [
   [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1],
 ] as const;
+
+/** Smooth 2D value noise in [0,1). */
+export function vnoise(x: number, z: number, seed = 0): number {
+  const xi = Math.floor(x);
+  const zi = Math.floor(z);
+  const fx = x - xi;
+  const fz = z - zi;
+  const h = (a: number, b: number) => {
+    const v = Math.sin(a * 127.1 + b * 311.7 + seed * 74.7) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  const sx = fx * fx * (3 - 2 * fx);
+  const sz = fz * fz * (3 - 2 * fz);
+  const a = h(xi, zi) + (h(xi + 1, zi) - h(xi, zi)) * sx;
+  const b = h(xi, zi + 1) + (h(xi + 1, zi + 1) - h(xi, zi + 1)) * sx;
+  return a + (b - a) * sz;
+}

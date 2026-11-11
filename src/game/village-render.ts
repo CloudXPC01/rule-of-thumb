@@ -1,34 +1,32 @@
 /**
- * Instanced voxel villagers: body, head, two white pixel eyes, and a carried
- * item (log / fish / water). Heads tilt up toward the player when watched,
- * and eyes track the nearest hand.
+ * Instanced voxel villagers styled per art direction: bright tunics from a
+ * 5-colour set, 1-pixel ink eyes on a skin face, role props (axe for
+ * woodcutters, rod for fishers, a hat for the elder), carried items and a
+ * soft contact shadow so they read at 2.5 cm against the grass.
+ * Heads tilt up toward the player when watched; eyes follow the nearest hand.
  */
-import {
-  BoxGeometry,
-  Color,
-  Group,
-  InstancedMesh,
-  Matrix4,
-  MeshBasicMaterial,
-  MeshLambertMaterial,
-  Quaternion,
-  Vector3,
-  Euler,
-} from '@iwsdk/core';
-import { Village, VState } from './village.js';
+import { Color, Euler, Group, InstancedMesh, Matrix4, Quaternion, Vector3 } from '@iwsdk/core';
+import { TILE } from './island.js';
+import { C, STYLE } from './style.js';
+import { Job, Village, VState } from './village.js';
+import { makeShadows, VoxelMesh } from './voxel.js';
 
 const MAX = 16;
-const BODY_W = 0.011;
-const BODY_H = 0.014;
-const HEAD = 0.0115;
-const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524];
+const V = (TILE / 8) * STYLE.villagerScale;
+const BODY_W = 3 * V;
+const BODY_D = 2.2 * V;
+const BODY_H = 3 * V;
+const HEAD = 2.8 * V;
+const LEGS = 0.8 * V;
+const P = STYLE.pal;
 
 export class VillageRender {
   root = new Group();
-  private body: InstancedMesh;
-  private head: InstancedMesh;
-  private eyes: InstancedMesh;
-  private item: InstancedMesh;
+  private body: VoxelMesh;
+  private head: VoxelMesh;
+  private eyes: VoxelMesh;
+  private gear: VoxelMesh; // [hat, tool handle, tool head, carried item] per villager
+  private shadows: InstancedMesh;
   private m = new Matrix4();
   private q = new Quaternion();
   private qHead = new Quaternion();
@@ -43,90 +41,147 @@ export class VillageRender {
   headTarget = new Vector3(0, 0.4, 0.5);
 
   constructor(private village: Village) {
-    const box = new BoxGeometry(1, 1, 1);
-    this.body = new InstancedMesh(box, new MeshLambertMaterial(), MAX);
-    this.head = new InstancedMesh(box, new MeshLambertMaterial(), MAX);
-    this.eyes = new InstancedMesh(box, new MeshBasicMaterial({ color: 0xffffff }), MAX * 2);
-    this.item = new InstancedMesh(box, new MeshLambertMaterial(), MAX);
-    for (const im of [this.body, this.head, this.eyes, this.item]) {
-      im.frustumCulled = false;
-      this.root.add(im);
-    }
+    this.body = new VoxelMesh(MAX);
+    this.head = new VoxelMesh(MAX);
+    this.eyes = new VoxelMesh(MAX * 2);
+    this.gear = new VoxelMesh(MAX * 4);
+    this.shadows = makeShadows(MAX, 0.38);
+    for (const im of [this.shadows, this.body, this.head, this.eyes, this.gear]) this.root.add(im);
+  }
+
+  private hide(mesh: InstancedMesh, i: number) {
+    this.m.makeScale(0, 0, 0);
+    mesh.setMatrixAt(i, this.m);
+  }
+
+  /** Place a gear box at local offset (in the villager's frame). */
+  private gearAt(i: number, bx: number, by: number, bz: number, yawQ: Quaternion, lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, col: number, cell: number, tilt = 0) {
+    this.off.set(lx, ly, lz).applyQuaternion(yawQ);
+    this.p.set(bx + this.off.x, by + this.off.y, bz + this.off.z);
+    this.s.set(sx, sy, sz);
+    if (tilt) {
+      this.e.setFromQuaternion(yawQ);
+      this.e.x += tilt;
+      this.qHead.setFromEuler(this.e);
+      this.m.compose(this.p, this.qHead, this.s);
+    } else this.m.compose(this.p, yawQ, this.s);
+    this.gear.setMatrixAt(i, this.m);
+    this.c.set(col);
+    this.gear.setColorAt(i, this.c);
+    this.gear.setCells(i, cell);
   }
 
   update() {
     const vs = this.village.villagers;
+    const t = performance.now() / 1000;
     for (let k = 0; k < MAX; k++) {
       const v = vs[k];
       if (!v) {
-        this.m.makeScale(0, 0, 0);
-        this.body.setMatrixAt(k, this.m);
-        this.head.setMatrixAt(k, this.m);
-        this.eyes.setMatrixAt(k * 2, this.m);
-        this.eyes.setMatrixAt(k * 2 + 1, this.m);
-        this.item.setMatrixAt(k, this.m);
+        this.hide(this.body, k);
+        this.hide(this.head, k);
+        this.hide(this.eyes, k * 2);
+        this.hide(this.eyes, k * 2 + 1);
+        for (let g = 0; g < 4; g++) this.hide(this.gear, k * 4 + g);
+        this.hide(this.shadows, k);
         continue;
       }
-      const walking = v.state === VState.Walk || v.state === VState.Carry;
-      const bob = walking ? Math.abs(Math.sin(v.bob)) * 0.002 : 0;
-      const hop = Math.sin(Math.min(1, v.hop) * Math.PI) * 0.008 * (v.hop > 0 ? 1 : 0);
-      const shake = v.shiver ? Math.sin(v.bob * 9) * 0.0006 : 0;
-      const chop = v.state === VState.Chop ? Math.sin(v.bob * 3) * 0.25 : 0;
+      const walking = v.state === VState.Walk || v.state === VState.Carry || v.state === VState.Flee || v.state === VState.Gather;
+      const bob = walking ? Math.abs(Math.sin(v.bob)) * 0.0022 : 0;
+      const hop = Math.sin(Math.min(1, v.hop) * Math.PI) * 0.009 * (v.hop > 0 ? 1 : 0);
+      const shake = v.shiver ? Math.sin(v.bob * 9) * 0.0007 : 0;
+      const chopping = v.state === VState.Chop;
+      const swing = chopping ? Math.sin(t * 9 + v.id) : 0;
 
-      // facing: player when watching, else heading
+      // facing: player when watched, else heading
       let yaw = v.heading;
       if (v.lookUp > 0.01) {
         const toYaw = Math.atan2(this.headTarget.x - v.x, this.headTarget.z - v.z);
         yaw = lerpAngle(v.heading, toYaw, v.lookUp);
       }
-      this.q.setFromEuler(this.e.set(chop * 0.4, yaw, 0));
-      const duck = v.duck;
+      this.q.setFromEuler(this.e.set(0, yaw, 0));
+      const squash = 1 - v.duck * 0.45 - (v.hop > 0.8 ? 0.12 : 0);
       const baseY = v.y + bob + hop;
+      const bodyH = BODY_H * squash;
+      const bx = v.x + shake;
+      const bz = v.z;
 
-      this.p.set(v.x + shake, baseY + BODY_H / 2, v.z);
-      this.s.set(BODY_W * (1 + duck * 0.25), BODY_H * (1 - (v.hop > 0.8 ? 0.15 : 0)) * (1 - duck * 0.45), BODY_W * 0.8);
+      // body (tunic) sits on short legs
+      this.p.set(bx, baseY + LEGS + bodyH / 2, bz);
+      this.s.set(BODY_W * (1 + v.duck * 0.2), bodyH, BODY_D);
       this.m.compose(this.p, this.q, this.s);
       this.body.setMatrixAt(k, this.m);
-      this.body.setColorAt(k, this.c.set(v.tunic));
+      this.c.set(P.tunics[v.id % P.tunics.length]);
+      this.body.setColorAt(k, this.c);
+      this.body.setCells(k, C.white);
 
       // head pitches back toward the Hand when watched
       const pitch = -0.7 * v.lookUp;
       this.qHead.setFromEuler(this.e.set(pitch, yaw, 0));
-      const bodyH = BODY_H * (1 - duck * 0.45);
-      this.p.set(v.x + shake, baseY + bodyH + HEAD / 2, v.z);
+      const headY = baseY + LEGS + bodyH + HEAD / 2;
+      this.p.set(bx, headY, bz);
       this.s.setScalar(HEAD);
       this.m.compose(this.p, this.qHead, this.s);
       this.head.setMatrixAt(k, this.m);
-      this.head.setColorAt(k, this.c.set(SKIN[v.id % SKIN.length]));
+      this.c.set(P.skin[(v.id * 7) % P.skin.length]);
+      this.head.setColorAt(k, this.c);
+      this.head.setCells(k, C.white);
 
-      // eyes: two white pixels on the face, sliding toward the look target
-      const lookX = Math.max(-1, Math.min(1, (this.lookTarget.x - v.x) * 8)) * 0.0012;
+      // eyes: two ink pixels that slide toward the nearest hand; wide when watched
+      const lookX = Math.max(-1, Math.min(1, (this.lookTarget.x - v.x) * 8)) * 0.25 * V;
+      const wide = v.lookUp > 0.5 ? 1.5 : 1;
       for (let e = 0; e < 2; e++) {
-        this.off.set((e ? 1 : -1) * 0.0027 + lookX, 0.0012, HEAD / 2 + 0.0003).applyQuaternion(this.qHead);
-        this.p.set(v.x + shake, baseY + bodyH + HEAD / 2, v.z).add(this.off);
-        this.s.set(0.0023, v.lookUp > 0.5 ? 0.0032 : 0.0023, 0.0006);
+        this.off.set((e ? 1 : -1) * 0.7 * V + lookX, 0.25 * V, HEAD / 2 + 0.0002).applyQuaternion(this.qHead);
+        this.p.set(bx, headY, bz).add(this.off);
+        this.s.set(0.55 * V, 0.55 * V * wide, 0.15 * V);
         this.m.compose(this.p, this.qHead, this.s);
         this.eyes.setMatrixAt(k * 2 + e, this.m);
+        this.c.set(P.ink);
+        this.eyes.setColorAt(k * 2 + e, this.c);
+        this.eyes.setCells(k * 2 + e, C.white);
       }
 
-      // carried item above the head
-      if (v.carrying) {
-        const col = v.carrying === 1 ? 0x8a5a2b : v.carrying === 2 ? 0x9fd3e6 : 0x3fb3d8;
-        this.p.set(v.x, baseY + bodyH + HEAD + 0.004, v.z);
-        if (v.carrying === 1) this.s.set(0.012, 0.004, 0.004);
-        else if (v.carrying === 2) this.s.set(0.008, 0.0035, 0.003);
-        else this.s.set(0.005, 0.005, 0.005);
-        this.m.compose(this.p, this.q, this.s);
-        this.item.setColorAt(k, this.c.set(col));
+      // gear 0: hat for the elder (first villager) / gold band once they have laws
+      const g0 = k * 4;
+      if (v.id === 0) {
+        this.gearAt(g0, bx, headY, bz, this.qHead, 0, HEAD / 2 + 0.5 * V, 0, HEAD * 1.15, V, HEAD * 1.15, 0xf2efe6, C.white);
+      } else if (this.village.laws.size > 0 && v.id % 3 === 1) {
+        this.gearAt(g0, bx, headY, bz, this.qHead, 0, HEAD / 2 + 0.15 * V, 0, HEAD * 1.04, 0.5 * V, HEAD * 1.04, 0xe0b23a, C.white);
+      } else this.hide(this.gear, g0);
+
+      // gear 1-2: role tool in the right hand (axe for choppers, rod for fishers)
+      const bodyMidY = baseY + LEGS + bodyH * 0.55;
+      if (v.job === Job.Chop || chopping) {
+        const tilt = -0.6 + swing * 0.9;
+        this.gearAt(g0 + 1, bx, bodyMidY, bz, this.q, BODY_W / 2 + 0.4 * V, 0.6 * V, 0.6 * V, 0.4 * V, 3 * V, 0.4 * V, P.wood, C.white, tilt);
+        this.gearAt(g0 + 2, bx, bodyMidY, bz, this.q, BODY_W / 2 + 0.4 * V, 1.9 * V, 1.4 * V, 0.3 * V, 1 * V, 1.2 * V, 0xb8bcc4, C.white, tilt);
+      } else if (v.job === Job.Fish || v.state === VState.Fish) {
+        this.gearAt(g0 + 1, bx, bodyMidY, bz, this.q, BODY_W / 2 + 0.3 * V, 1.6 * V, 1.6 * V, 0.25 * V, 5 * V, 0.25 * V, P.wood, C.white, 0.9);
+        this.hide(this.gear, g0 + 2);
       } else {
-        this.m.makeScale(0, 0, 0);
+        this.hide(this.gear, g0 + 1);
+        this.hide(this.gear, g0 + 2);
       }
-      this.item.setMatrixAt(k, this.m);
+
+      // gear 3: carried item above the head (log / fish / water)
+      if (v.carrying) {
+        const col = v.carrying === 1 ? 0x8a5a2b : v.carrying === 2 ? 0xbfd8e2 : 0x3fa0c8;
+        const ly = HEAD + 0.6 * V + bodyH - BODY_H;
+        if (v.carrying === 1) this.gearAt(g0 + 3, bx, headY, bz, this.q, 0, ly, 0, 3.2 * V, 0.9 * V, 0.9 * V, col, C.white);
+        else if (v.carrying === 2) this.gearAt(g0 + 3, bx, headY, bz, this.q, 0, ly, 0, 2.2 * V, 0.8 * V, 0.6 * V, col, C.white);
+        else this.gearAt(g0 + 3, bx, headY, bz, this.q, 0, ly, 0, 1.3 * V, 1.3 * V, 1.3 * V, col, C.white);
+      } else this.hide(this.gear, g0 + 3);
+
+      // soft shadow, shrinking as they hop
+      this.p.set(v.x, v.y + 0.0008, v.z);
+      this.s.setScalar(TILE * 0.62 * (1 - hop * 25));
+      this.m.compose(this.p, this.q.identity(), this.s);
+      this.shadows.setMatrixAt(k, this.m);
     }
-    for (const im of [this.body, this.head, this.eyes, this.item]) {
-      im.instanceMatrix.needsUpdate = true;
-      if (im.instanceColor) im.instanceColor.needsUpdate = true;
-    }
+    this.body.touch();
+    this.head.touch();
+    this.eyes.touch();
+    this.gear.touch();
+    this.shadows.instanceMatrix.needsUpdate = true;
   }
 }
 

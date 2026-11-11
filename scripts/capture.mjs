@@ -126,6 +126,7 @@ if (mode === 'fps') {
   });
   console.log(JSON.stringify(r));
 } else {
+  await page.evaluate((w) => { globalThis.__videoStartWall = w; }, videoStartWall);
   const src = fs.readFileSync(scenarioPath, 'utf8');
   const result = await page.evaluate(async (code) => {
     // eslint-disable-next-line no-new-func
@@ -133,6 +134,7 @@ if (mode === 'fps') {
     return await fn();
   }, src);
   console.log('scenario result:', JSON.stringify(result));
+  fs.writeFileSync(path.join(outDir, 'result.json'), JSON.stringify(result, null, 2));
 }
 
 await context.close();
